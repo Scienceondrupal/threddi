@@ -1,6 +1,7 @@
 // $Id$
 
 /**
+ * This module was developed with initial funding from National Oceanic and Atmospheric Administration (NOAA).  Currently, the module is being maintained with funding from the NASA ACCESS Grant.
  * Copyright (c) 2013, Information Technology & Systems Center.  University of Alabama in Huntsville
  * All rights reserved.
  * Redistribution and use of the module, with or without modification, are permitted with proper credit to Information Technology & Systems Center,  University of Alabama in Huntsville.
