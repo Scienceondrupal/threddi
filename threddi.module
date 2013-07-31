@@ -1,0 +1,425 @@
+<?php
+
+// $Id$
+
+/**
+ * Copyright (c) 2013, Information Technology & Systems Center.  University of Alabama in Huntsville
+ * All rights reserved.
+ * Redistribution and use of the module, with or without modification, are permitted with proper credit to Information Technology & Systems Center,  University of Alabama in Huntsville.
+ */
+
+$debug = "<script type='text/javascript'>alert('debug');</script>";
+
+function threddi_init() {
+    drupal_add_css(drupal_get_path('module', 'threddi') . '/threddi.css');
+    drupal_add_js(drupal_get_path('module', 'threddi') . '/javascript/jquery.js');
+}
+
+function threddi_help($path, $arg) {
+    $output = ''; //declare your output variable
+    switch ($path) {
+        case "admin/help#threddi":
+            $output = '<p' . t("Displays a tree of thredd data") . '</p>';
+    }
+    return $output;
+}
+
+/**
+ * Valid permissions for this module
+ * @return array An array of valid permissions for the threddi module
+ */
+function threddi_perm() {
+    return array('access threddi content', 'administer threddi');
+}
+
+function threddi_menu() {
+
+    $items = array();
+
+    $items['admin/settings/threddi'] = array(
+        'title' => 'THREDDS module settings',
+        'description' => 'Threddi configuration',
+        'page callback' => 'drupal_get_form',
+        'page arguments' => array('threddi_admin'),
+        'access arguments' => array('administer threddi'),
+        'type' => MENU_NORMAL_ITEM,
+    );
+
+
+    $items['threddi'] = array(
+        //'title' => 'Threddi',
+        'title' => variable_get("threddi_explorer_title", NULL),
+        'page callback' => 'threddi_explorer',
+        'access arguments' => array('access threddi content'),
+        'type' => MENU_CALLBACK
+    );
+
+
+    $items['threddisearch'] = array(
+        'title' => variable_get("threddi_search_title", NULL),
+        'page callback' => 'threddi_search',
+        'access arguments' => array('access threddi content'),
+        'type' => MENU_CALLBACK
+    );
+
+    $items['threddisearch/ajaxhelper'] = array(
+        'page callback' => 'threddi_search_ajaxHelper',
+        'access arguments' => array('access threddi content'),
+        'type' => MENU_CALLBACK,
+    );
+
+    // Menu call back function for making the ajax call.
+    $items['threddi/ajaxhelper'] = array(
+        'page callback' => 'threddi_ajaxHelper',
+        'access arguments' => array('access threddi content'),
+        'type' => MENU_CALLBACK,
+    );
+
+    return $items;
+}
+
+function threddi_search_ajaxHelper() {
+    $xml = simpleXML_load_file(threddi_buildSearchURL());
+    if ($xml != false) {
+        $items = threddi_search_xmlparse_r($xml);
+        echo $items;
+    }
+}
+
+//Pulls an xml file from the appropriate webpage given by $_GET['url']
+function threddi_ajaxHelper() {
+    $url = $_GET['url'];
+    $spacing = $_GET['spacing'];
+    echo(threddi_explorer_xmlparse($url, $spacing));
+}
+
+/**
+  Builds the main threddi page content
+ * */
+function threddi_explorer() {
+    $page_content = "<p>" . variable_get('threddi_description', NULL) . "</p>";
+
+    drupal_add_js(drupal_get_path('module', 'threddi') . '/javascript/getxml.js'); //add js file for pulling xml 
+    $settingsarray = array('timeout' => variable_get('threddi_timeout', 0));
+    drupal_add_js(array('threddi' => $settingsarray), "setting"); // make the threddi_timeout variable available for javascript
+    $parsedXML = threddi_explorer_xmlparse(variable_get('threddi_rootxml', NULL), 0); // parse the xml
+    $page_content .= $parsedXML; // add the parsed xml to the main string
+    if ($parsedXML == "") { //warning message if the parsed xml string is empty
+        drupal_set_message('No information found from Thredds. Make sure the root xml document is a link to a valid thredds xml document.', 'warning', FALSE);
+    }
+    return $page_content;
+}
+
+function threddi_admin() {
+    $form = array();
+
+    $form['threddi_rootxml'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Root xml document'),
+        '#default_value' => variable_get('threddi_rootxml', ""),
+        '#size' => 50,
+        '#maxlength' => 255,
+        '#description' => t("The location of the root xml document"),
+        '#required' => TRUE,
+    );
+
+    $form['threddi_ramaddaURL'] = array(
+        '#type' => 'textfield',
+        '#title' => t('RAMADDA URL'),
+        '#default_value' => variable_get('threddi_ramaddaURL', ""),
+        '#size' => 50,
+        '#maxlength' => 255,
+        '#description' => t("The location of the ramadda repository. (must end in /repository/)"),
+        '#required' => TRUE,
+    );
+
+    $form['threddi_explorer_title'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Explorer page title'),
+        '#default_value' => variable_get('threddi_explorer_title', ''),
+        '#size' => 50,
+        '#maxlength' => 255,
+        '#description' => t("The title that users will see on the explorer page. <font color='#FF0000'>You must <b>clear cached data</b> in the website performance options for changes to the title to take effect</font>"),
+        '#required' => FALSE,
+    );
+
+    $form['threddi_search_title'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Search page title'),
+        '#default_value' => variable_get('threddi_search_title', ''),
+        '#size' => 50,
+        '#maxlength' => 255,
+        '#description' => t("The title that users will see on the search page. <font color='#FF0000'>You must <b>clear cached data</b> in the website performance options for changes to the title to take effect</font>"),
+        '#required' => FALSE,
+    );
+
+    $form['threddi_description'] = array(
+        '#type' => 'textarea',
+        '#title' => t('Page description'),
+        '#default_value' => variable_get('threddi_description', "Below is a tree structure generated from a THREDDS data server. Click titles preceded by '>' to expand them. <hr>"),
+        '#size' => 500,
+        '#maxlength' => 500,
+        '#description' => t("The description that users will see on the Threddi page"),
+        '#required' => FALSE,
+    );
+
+
+    $form['threddi_search_description'] = array(
+        '#type' => 'textarea',
+        '#title' => t('Search page description'),
+        '#default_value' => variable_get('threddi_search_description', "Search for the desired item. <hr>"),
+        '#size' => 500,
+        '#maxlength' => 500,
+        '#description' => t("The description that users will see on the Threddi search page"),
+        '#required' => FALSE,
+    );
+
+
+    $form['threddi_timeout'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Request timeout'),
+        '#default_value' => variable_get('threddi_timeout', "5000"),
+        '#size' => 10,
+        '#maxlength' => 31,
+        '#description' => t("How long (in milliseconds) until a request to the thredds server times out. (0 means no limit)"),
+        '#required' => TRUE,
+    );
+
+    return system_settings_form($form);
+}
+
+function threddi_admin_validate($form, &$form_state) {
+    $timeout = $form_state['values']['threddi_timeout'];
+    $rootxml = $form_state['values']['threddi_rootxml'];
+
+    //ensures the timeout is an intetger
+    if (!is_numeric($timeout)) {
+        form_set_error('threddi_rootxml', t('You must enter an integer for the request timeout.'));
+    }
+    //ensures the timeout is positive
+    else if ($timeout <= 0) {
+        form_set_error('threddi_rootxml', t('Request timeout must be positive.'));
+    }
+    //ensures the root xml document has a .xml extension
+    if (substr(trim($rootxml), -3) != 'xml') {
+        form_set_error('threddi_rootxml', t("The root xml document must have a .xml extension."));
+    }
+    //ensures the root xml document exists
+    else if (!simpleXML_load_file($rootxml)) {
+        form_set_error('threddi_rootxml', t("Unable to access root xml document. Please ensure the directory or webpage exists."));
+    }
+}
+
+//-------------------THREDDI SEARCH HELPER FUNCTIONS--------------
+function threddi_buildSearchURL() {
+    $text = $_GET['text'];
+    $datadatefrom = $_GET['datadatefrom'];
+    $datadateto = $_GET['datadateto'];
+    $areanorth = $_GET['areanorth'];
+    $areasouth = $_GET['areasouth'];
+    $areaeast = $_GET['areaeast'];
+    $areawest = $_GET['areawest'];
+
+    $baseURL = variable_get('threddi_ramaddaURL', "");
+    $baseURL .= 'search/do?text=' . $text . '&output=xml.xml';
+    $baseURL .= '&datadate.from=' . $datadatefrom;
+    $baseURL .= '&datadate.to=' . $datadateto;
+    $baseURL .= '&area_north=' . $areanorth;
+    $baseURL .= '&area_west=' . $areawest;
+    $baseURL .= '&area_east=' . $areaeast;
+    $baseURL .= '&area_south=' . $areasouth;
+
+
+    return $baseURL;
+}
+
+function threddi_search_xmlparse_r($xml) {
+    $page_content = '';
+
+    // If the xml element is of type entry
+    if ($xml != null and ($xml->getName() == "entry")) {
+        // Get the element's attributes
+        $attName = ''; //to contain the attribute name
+        $attURL = '';
+        foreach ($xml->attributes() as $a => $b) {  //find name and url from the attributes
+            if ($a == "name" and $b != "") {
+                $attName = $b;
+            }
+            if ($a == "resource" and $b != "") {
+                $attURL = $b;
+            }
+        }
+
+        if ($attURL != '') {
+            $attURL .= '.html'; //urls do not contain an html extension. adding it here
+            $page_content .= "<div class='new'> <a href='" . $attURL . "'>" . $attName . "</a></div> "; //outputs the URL link
+        }
+
+        // Recursion
+        foreach ($xml->children() as $child) {  //recurse to all child nodes
+            $page_content .= threddi_search_xmlparse_r($child);
+        }
+    }
+    return $page_content;
+}
+
+//------------------------- STRING OPERATIONS --------------------
+function threddi_formatURL($root, $append) {
+    //remove first slash in append if it exists
+    if ($append != null and $append[0] == '/') {
+        $append = substr($append, 1); //return the string minus the first character
+    }
+    //look at the first string until '/' in append
+    $i = strpos($append, '/');
+    if ($i != false) { //if append contains another slash
+        $searchString = substr($append, 0, $i); //get string up until slash
+    } else {
+        $searchString = $append;
+    }
+    //find first location of $searchString in root
+    $i = strpos($root, $searchString);
+    if ($i != false) { //if the searchString was found in the root
+        //take substr of everything before index $i in $root
+        $root = substr($root, 0, $i);
+        //make sure root ends in '/'
+        if ($root[strlen($root) - 1] != '/') {
+            $root .= '/';
+        }
+        //add append to root
+        $root .= $append;
+    } else { //otherwise, remove past last slash and add append
+        $root = threddi_removePastLastSlash($root);
+        $root .= $append;
+    }
+    return $root;
+}
+
+/*
+  removes the last part of an address (past the last slash)
+  returns false if failed
+ */
+
+function threddi_removePastLastSlash($url) {
+    if (strrpos($url, '/') != FALSE) { // if it finds a "/"
+        $url = substr($url, 0, strrpos($url, '/') + 1);
+        return $url;
+    } elseif (strrpos($url, '\\') != FALSE) { // if it finds a "\"
+        $url = substr($url, 0, strrpos($url, '\\') + 1);
+        return $url;
+    } else { // if it finds neither "/" or "\"
+        return FALSE;
+    }
+}
+
+/*
+  removes the first instance of the '/' character in a string.
+  returns the modified string.
+ */
+
+function thredd_removeFirstSlash($url) {
+    $i = strpos($url, '/');
+    if ($i != false) { // if a slash was found
+    }
+}
+
+//returns a string with $num spaces
+function threddi_spaces($num) {
+    $str = '';
+    for ($i = 0; $i < $num; $i++) {
+        $str .= '&nbsp;&nbsp;&nbsp;';
+    }
+    return $str;
+}
+
+//------------------------------------------------------------
+//kicks off the recursive xml parsing of the xml found at $url. $level is the initial spacing
+function threddi_explorer_xmlparse($url, $level) {
+    $page_content = '';
+    $xml = simpleXML_load_file($url);
+    if ($xml != false) {
+        $page_content .= "<ul>";
+        $page_content .= threddi_explorer_xmlparse_r($xml, $url, $level);
+        $page_content .= "</ul>";
+    }
+    return $page_content;
+}
+
+/*
+  recursively iterates through elements in $xml
+ */
+
+function threddi_explorer_xmlparse_r($xml, $filename, $level) {
+    $page_content = '';
+
+    // If the xml element is of type dataset, catalogRef, or catalog
+    if ($xml != null and ($xml->getName() == "dataset" OR $xml->getName() == "catalogRef" OR $xml->getName() == "catalog")) {
+        // Get the element's attributes
+        $attName = ''; //to contain the attribute name
+        $attURL = ''; //to contain the attribute url link (if there)
+        $attURLPath = '';
+        foreach ($xml->attributes() as $a => $b) {  //find name and urlpath attributes
+            if ($a == "name" and $b != "") {
+                $attName = $b;
+            }
+            if ($a == "ID" and $b != "") {
+                $attURL = $b;
+            }
+            if ($a == "urlPath" and $b != "") {
+                $attURLPath = $b;
+            }
+        }
+
+        // Case dataset
+        if ($xml->getName() == "dataset") {
+            if ($attURLPath != '' and $attURL != '') { //if item contains an ID attribute and urlPath attribute, make output a link.
+                $tempURL = xmlToHtmlExtension($filename) . '?dataset=' . $attURL; //construct correct url link
+                //$page_content .= "<div><a href='" . $tempURL . "'>" . threddi_spaces($level) . $attName . "</a></div> "; //outputs the URL link 
+                $page_content .= "<li><a href='" . $tempURL . "'>" . $attName . "</a></li> "; //outputs the URL link 
+            } else {
+                $page_content .= "<li>" . $attName . "</li>";
+            }
+
+            // Case catalogRef
+        } elseif ($xml->getName() == "catalogRef") {
+            $tempURL = '';
+            $tempTitle = '';
+            foreach ($xml->attributes("xlink", TRUE) as $a => $b) {  //print out all xlink attributes
+                if ($a == 'href') { //if xlink attribute is a link
+                    if (substr($b, 0, 7) == "http://") { //if the address is a full address
+                        $tempURL = $b;
+                    } else { //if the address is a relative address
+                        $tempURL = threddi_formatURL((string) $filename, (string) $b);
+                    }
+                } elseif ($a == 'title') {
+                    $tempTitle = $b;
+                }
+            }
+            $page_content .= "<li class='expandable' id='" . $level . "' title='" . $tempURL . "'>" . $tempTitle . "</li>";
+        }
+
+        // Recursion
+        foreach ($xml->children() as $child) {  //recurse to all child nodes
+            $page_content .= threddi_explorer_xmlparse_r($child, $filename, $level + 1);
+        }
+    }
+    return $page_content;
+}
+
+function threddi_isXMLFile($url) {
+    if (strpos($url, '.xml') == FALSE) {
+        return FALSE;
+    } else {
+        return TRUE;
+    }
+}
+
+/*
+  Removes .xml tag at the end of a filename and replaces it with .html
+  Requires: a filename with .xml at the end
+ */
+
+function xmlToHtmlExtension($url) {
+    $url = substr($url, 0, strlen($url) - 3);
+    $url .= 'html';
+    return $url;
+}
